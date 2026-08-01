@@ -503,7 +503,7 @@ let watchedApps: [AppDefinition] = [
                 foregroundInterval: 1.0,
                 backgroundInterval: 5.0
             )
-        ),
+        )
     ),
 
     // 3. Z Code
