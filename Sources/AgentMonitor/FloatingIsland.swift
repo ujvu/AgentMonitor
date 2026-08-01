@@ -543,12 +543,15 @@ final class FloatingIsland: NSPanel {
     ///
     /// Commands:
     ///   - "peek":    same entry point as mouseEntered on the hidden sliver
+    ///   - "leave":   same entry point as mouseExited
     ///   - "dismiss": same entry point as a single click on the expanded island
     ///   - "show":    same entry point as the menu “显示/隐藏浮岛” show branch
+    ///   - "complete-chatgpt": simulate the real ChatGPT completion cue
     ///   - "pause"/"resume": freeze / unfreeze the live state machine so
     ///     tests are deterministic (same entry points as the menu toggle)
     private let testCommandPath = "/tmp/am_testui_cmd"
     private var testCommandTimer: Timer?
+    private var suppressQuotaAlertsForTests = false
 
     private func installTestRemoteControl() {
         testCommandTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
@@ -569,14 +572,22 @@ final class FloatingIsland: NSPanel {
             switch line {
             case "peek":
                 self.islandViewMouseEntered(self.container)
+            case "leave":
+                self.islandViewMouseExited(self.container)
             case "dismiss":
                 self.hide(quick: true)
             case "show":
                 self.show()
+            case "complete-chatgpt":
+                if let app = self.apps.first(where: { $0.id == "chatgpt" }) {
+                    self.presentCompletion(for: app)
+                }
             case "pause":
+                self.suppressQuotaAlertsForTests = true
                 self.engine?.stop()
                 Logger.shared.logInfo("TestUI: monitoring paused")
             case "resume":
+                self.suppressQuotaAlertsForTests = false
                 self.engine?.start()
                 Logger.shared.logInfo("TestUI: monitoring resumed")
             default:
@@ -596,12 +607,17 @@ final class FloatingIsland: NSPanel {
         refreshEntries()
         refreshScenes()
         positionTopCenter()
-        setMode(.hidden)
+        // show() drives its own three-step expansion sequence below. Keep the
+        // logical mode aligned with the visible geometry so a click received
+        // before the next state notification can still call hide().
+        let previousMode = currentMode
+        currentMode = .expanded
+        container.mode = .expanded
         // 引擎当前态对齐窗口真实几何（hidden 视觉 100×4，圆角 2），
         // 保证首次唤醒形变从真实当前态起步，无跳变。
         animationEngine.syncCurrent(IslandMorphState.hidden)
         orderFrontRegardless()
-        Logger.shared.logInfo("FloatingIsland show() windowVisible=\(self.isVisible) mode=\(currentMode)")
+        Logger.shared.logInfo("FloatingIsland show() windowVisible=\(self.isVisible) mode=\(previousMode)->\(currentMode)")
         // alpha 仅作为辅助淡入——展开/收起的主动画由 IslandAnimationEngine
         // 的序列驱动（先弹高度 → 展开宽度 → 内容淡入）。
         alphaValue = 0.0
@@ -818,6 +834,12 @@ final class FloatingIsland: NSPanel {
                         detail: String) {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
+#if DEBUG
+            guard !self.suppressQuotaAlertsForTests else {
+                Logger.shared.logInfo("TestUI: quota alert suppressed during deterministic test")
+                return
+            }
+#endif
             // Compose an attention-style scene so the renderer has content.
             let scene = IslandScene(
                 mode: .attention,
@@ -993,6 +1015,15 @@ final class FloatingIsland: NSPanel {
     /// 渲染态规则：收起（→ hidden）时保留上一态继续绘制，使收缩过程可见；
     /// 其余情况立即切到目标态渲染。
     private func setMode(_ mode: IslandDisplayMode) {
+        // A state/signal event can reopen the island after hide() has stopped
+        // the content timer and ordered the panel out. These paths call
+        // setMode directly (not show()), so restore both prerequisites here.
+        // Do this before the same-mode guard: a completion cue can replace an
+        // already-expanded working card while the timer is still stopped.
+        if mode != .hidden {
+            orderFrontRegardless()
+            ensureAnimTimerRunning()
+        }
         guard currentMode != mode else { return }
         // 显式切换到可见表面（expanded / attention / quotaAlert）意味着
         // 一次新的展示意图：若此时正有 collapse 在途（hide() 刚被点击触发），
@@ -1139,6 +1170,12 @@ final class FloatingIsland: NSPanel {
         }
     }
 
+    private func ensureAnimTimerRunning() {
+        guard animTimer?.isValid != true else { return }
+        startAnimTimer()
+        Logger.shared.logInfo("FloatingIsland animation timer restored")
+    }
+
     private func tick() {
         // 只有当岛实际在显示内容(expanded/attention/quotaAlert)时才推进
         // 内容帧 + 重绘。hidden 态 draw() 是空的,推进 animFrame 只会触发
@@ -1162,6 +1199,7 @@ final class FloatingIsland: NSPanel {
                 autoCollapseAt = nil
                 completionOverrideAppId = nil
                 completionOverrideUntil = nil
+                Logger.shared.logInfo("FloatingIsland auto-collapse deadline reached")
                 setMode(.hidden)
             }
         }
@@ -1381,6 +1419,10 @@ extension FloatingIsland: FloatingIslandViewDelegate {
     /// - step2 contentFadeIn 150ms:contentAlpha 0→1 —— 内容最后淡入
     /// 总计 ~450ms。取消机制保证展开中途来 hide/click 可作废本序列。
     private func expandFromHover() {
+        // Hover may intentionally interrupt an in-flight hide(). The old
+        // sequence is cancelled by the new morph below, so its pendingHide
+        // completion will never run; release the guard here for the next click.
+        pendingHide = false
         let currentSize = self.frame.size
         let currentRadius = min(currentSize.width, currentSize.height) / 2
         let fullRadius = min(expandedSize.width, expandedSize.height) / 2

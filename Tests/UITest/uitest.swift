@@ -14,6 +14,7 @@
 //       dismissable afterwards (pendingHide must not get stuck)
 //   S3  Interruption: dismiss → re-peek mid-collapse → re-expand → dismiss
 //       again still works (regression test for the pendingHide fix)
+//   S4  Completion after orderOut restarts its timer and auto-collapses
 //   S0  Real-mouse sanity: System Events click on the island's top-center
 //       region must reach the island (best effort)
 //
@@ -270,6 +271,23 @@ func scenarioS0(_ pid: pid_t) {
     check("点击后浮岛收起(orderOut)", r.ok, detail: "点击命中区域或触发收起")
 }
 
+func scenarioS4(_ pid: pid_t) {
+    print("\n── S4 完成提醒: orderOut 后重新展开并按时自动收起 ──")
+    send("leave")
+    usleep(100_000)
+    send("complete-chatgpt")
+    let shown = poll(pid, timeout: 2.0) { isExpanded($0) }
+    check("完成提醒重新展开", shown.ok)
+    guard shown.ok else { return }
+
+    let t0 = Date()
+    let collapsed = poll(pid, timeout: 5.0, every: 0.05) { isSliver($0) }
+    let elapsed = Date().timeIntervalSince(t0)
+    check("完成提醒自动收起为隐藏浮岛", collapsed.ok,
+          detail: "耗时 \(String(format: "%.2f", elapsed))s")
+    check("自动收起在 4.5s 内完成", collapsed.ok && elapsed <= 4.5)
+}
+
 // MARK: - Main
 
 guard let pid = agentMonitorPid() else {
@@ -299,6 +317,7 @@ scenarioS1(pid)
 scenarioS2(pid)
 scenarioS3(pid)
 scenarioS0(pid)
+scenarioS4(pid)
 
 print("\n════════ 汇总: \(passCount) PASS / \(failCount) FAIL / \(skipCount) SKIP ════════")
 
