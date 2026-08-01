@@ -3,11 +3,13 @@
 
 # Local build outputs
 build/
-Tests/**/build/
-Tests/**/detectiontest
-Tests/**/enginetest
-Tests/**/live_scene_smoke
-Tests/**/uitest
+Tests/DetectionTest/build/
+Tests/DetectionTest/detectiontest
+Tests/EngineTest/build/
+Tests/EngineTest/enginetest
+Tests/LiveSceneTest/build/
+Tests/LiveSceneTest/live_scene_smoke
+Tests/UITest/uitest
 *.app/
 *.dmg
 *.zip

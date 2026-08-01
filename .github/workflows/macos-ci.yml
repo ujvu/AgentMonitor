@@ -1,0 +1,23 @@
+name: macOS build and tests
+
+on:
+  push:
+    branches: ["main", "agent/**"]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: macos-14
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Build application
+        run: ./build.sh
+
+      - name: Run detection regression
+        run: ./Tests/DetectionTest/build_and_run.sh
+
+      - name: Run animation engine tests
+        run: ./Tests/EngineTest/build_and_run.sh

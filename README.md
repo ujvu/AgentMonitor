@@ -106,6 +106,10 @@ Sources/AgentMonitor/
 
 `~/Library/Logs/AgentMonitor/AgentMonitor.log` — 状态切换、动画序列、额度刷新、hover 交互全记录。
 
+## GitHub 检查
+
+推送或提交 Pull Request 后，GitHub Actions 会在 macOS runner 上自动执行应用构建、OCR 规则回归和悬浮岛动画引擎测试。实时桌面采样测试需要本机打开目标应用，因此不纳入无桌面的 CI 流程。
+
 ## 验收清单(产品闭环)
 
 - [x] 多 Agent 状态检测(AX + OCR + Fusion)
