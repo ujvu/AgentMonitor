@@ -14,7 +14,8 @@ SRC_DIR="${PROJECT_DIR}/Sources/AgentMonitor"
 RES_DIR="${PROJECT_DIR}/Resources"
 ENTITLEMENTS="${RES_DIR}/AgentMonitor.entitlements"
 IDENTIFIER="com.cuishiming.AgentMonitor"
-CERT_NAME="AgentMonitorDev"
+CERT_NAME="${CODE_SIGN_IDENTITY:-AgentMonitorDev}"
+REQUIRE_SIGNING="${REQUIRE_SIGNING:-0}"
 
 echo "🔨 Building ${APP_NAME}..."
 
@@ -70,15 +71,29 @@ chmod +x "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
 # remembers the Accessibility grant across rebuilds. Falls back to ad-hoc
 # signing if the certificate isn't set up (run setup-cert.sh first).
 echo "  Code signing..."
-if security find-identity -p codesigning 2>/dev/null | grep -q "$CERT_NAME"; then
-    codesign --force \
-        --sign "$CERT_NAME" \
-        --identifier "${IDENTIFIER}" \
-        --entitlements "${ENTITLEMENTS}" \
-        --options runtime \
-        "${APP_BUNDLE}" 2>&1
+if security find-identity -p codesigning 2>/dev/null | grep -Fq "$CERT_NAME"; then
+    if [ "$REQUIRE_SIGNING" = "1" ]; then
+        codesign --force \
+            --sign "$CERT_NAME" \
+            --identifier "${IDENTIFIER}" \
+            --entitlements "${ENTITLEMENTS}" \
+            --options runtime \
+            --timestamp \
+            "${APP_BUNDLE}" 2>&1
+    else
+        codesign --force \
+            --sign "$CERT_NAME" \
+            --identifier "${IDENTIFIER}" \
+            --entitlements "${ENTITLEMENTS}" \
+            --options runtime \
+            "${APP_BUNDLE}" 2>&1
+    fi
     echo "  (signed with certificate: $CERT_NAME, entitlements applied)"
 else
+    if [ "$REQUIRE_SIGNING" = "1" ]; then
+        echo "❌ Required code-signing identity not found: $CERT_NAME"
+        exit 1
+    fi
     codesign --force \
         --sign - \
         --identifier "${IDENTIFIER}" \

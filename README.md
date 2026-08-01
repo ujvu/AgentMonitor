@@ -110,6 +110,20 @@ Sources/AgentMonitor/
 
 推送或提交 Pull Request 后，GitHub Actions 会在 macOS runner 上自动执行应用构建、OCR 规则回归和悬浮岛动画引擎测试。实时桌面采样测试需要本机打开目标应用，因此不纳入无桌面的 CI 流程。
 
+## 正式发布
+
+正式 DMG 必须使用 Apple Developer ID 签名并通过 Apple 公证。发布脚本不会在缺少证书或公证凭据时降级生成未公证安装包。
+
+```bash
+# 一次性保存公证凭据（命令会交互式询问 Apple ID、Team ID 和 app-specific password）
+xcrun notarytool store-credentials AgentMonitorNotary
+
+# 构建、Developer ID 签名、制作 DMG、提交公证、staple 并验证
+DEVELOPER_ID_APPLICATION="Developer ID Application: Your Name (TEAMID)" ./release.sh
+```
+
+产物输出到 `dist/AgentMonitor-<version>-macOS-arm64.dmg`。证书和公证凭据只保存在本机 Keychain，不写入仓库。
+
 ## 验收清单(产品闭环)
 
 - [x] 多 Agent 状态检测(AX + OCR + Fusion)

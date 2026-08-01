@@ -3,6 +3,7 @@
 
 # Local build outputs
 build/
+dist/
 Tests/DetectionTest/build/
 Tests/DetectionTest/detectiontest
 Tests/EngineTest/build/
