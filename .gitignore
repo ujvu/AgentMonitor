@@ -1,0 +1,24 @@
+# macOS metadata
+.DS_Store
+
+# Local build outputs
+build/
+Tests/**/build/
+Tests/**/detectiontest
+Tests/**/enginetest
+Tests/**/live_scene_smoke
+Tests/**/uitest
+*.app/
+*.dmg
+*.zip
+
+# Swift / Xcode intermediates
+.build/
+DerivedData/
+*.xcuserstate
+
+# Local logs and credentials
+*.log
+.env
+.env.*
+!.env.example

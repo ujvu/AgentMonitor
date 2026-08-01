@@ -23,6 +23,8 @@
     <key>NSAppleEventsUsageDescription</key>
     <string>用于激活其他智能体应用窗口</string>
     <key>NSAccessibilityUsageDescription</key>
-    <string>需要辅助功能权限来读取智能体应用窗口状态</string>
+    <string>AgentMonitor 需要辅助功能权限来读取被监控智能体应用的窗口状态，检测任务完成、需要继续或需要审批等状态。</string>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>AgentMonitor 需要读取被监控应用的窗口画面，用于生成任务状态提醒和窗口缩略图。</string>
 </dict>
 </plist>
