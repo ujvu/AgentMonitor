@@ -88,6 +88,14 @@ final class AppWatcher {
     /// unknown frames (then `currentOCREvidence` falls back to a lease-held
     /// working evidence while the lease is alive).
     private var cachedOCREvidence: Evidence?
+    /// True after OCR has actually established a working state in the current
+    /// app session. Once this is set, AX-idle alone is not allowed to end the
+    /// round: Electron Worker surfaces often expose no live status through AX.
+    private var hasSeenOCRWorking = false
+    /// Number of independent OCR frames after the latest working frame that
+    /// found no active/terminal marker. Polls must never increment this value;
+    /// otherwise one stale frame is counted repeatedly as several confirmations.
+    private var consecutiveOCRUnknownFrames = 0
 
     // MARK: - Signal dedup
 
@@ -152,6 +160,8 @@ final class AppWatcher {
         temporal.reset()
         pending = nil
         cachedOCREvidence = nil
+        hasSeenOCRWorking = false
+        consecutiveOCRUnknownFrames = 0
         Logger.shared.logInfo("AppWatcher[\(definition.id)] session reset reason=\(reason) observedAt=\(ISO8601DateFormatter().string(from: observedAt))")
     }
 
@@ -323,11 +333,38 @@ final class AppWatcher {
             commitSnapshot(snapshot, reason: reasonFor(axStatus, ocrEvidence))
 
         case .transitionNeeded(let target, let evidence):
+            // OCR-backed Electron surfaces (especially ChatGPT Worker) often
+            // report AX idle for the entire task. Never treat that permanent AX
+            // idle as three independent completion confirmations. Wait until an
+            // in-flight OCR pass finishes and two NEW OCR frames independently
+            // report no working marker. Explicit completed/attention verdicts
+            // still pass through immediately.
+            if Self.shouldDeferOCRBackedWorkingExit(
+                current: currentSnapshot.status,
+                target: target,
+                hasSeenOCRWorking: hasSeenOCRWorking,
+                consecutiveOCRUnknownFrames: consecutiveOCRUnknownFrames,
+                ocrInProgress: ocrInProgress
+            ) {
+                if pending != nil {
+                    pending = nil
+                }
+                Logger.shared.logDebug(
+                    "AppWatcher[\(definition.id)]: hold working — awaiting independent OCR absence frames " +
+                    "(unknown=\(consecutiveOCRUnknownFrames)/2 inProgress=\(ocrInProgress))")
+                break
+            }
+
             // A status transition is proposed. Confirm across polls before
             // committing; the threshold depends on direction — upgrades react
             // fast (1), downgrades are cautious (3) to avoid false-idle flicker.
-            let proposer = strongestSource(in: evidence) ?? .ocr
-            let proposerConf = strongestConfidence(in: evidence)
+            // Attribute the transition only to evidence that actually supports
+            // the proposed target. Previously AX-idle could label an
+            // OCR-working transition as source=ax, which then defeated the
+            // OCR-specific safety rules.
+            let supportingEvidence = evidence.filter { $0.conclusion == target }
+            let proposer = strongestSource(in: supportingEvidence) ?? .ocr
+            let proposerConf = strongestConfidence(in: supportingEvidence)
             let threshold = isDowngrade(from: currentSnapshot.status, to: target)
                 ? confirmThresholdDowngrade
                 : confirmThresholdUpgrade
@@ -455,6 +492,22 @@ final class AppWatcher {
         }
     }
 
+    /// Pure policy seam used by regression tests. An OCR-established working
+    /// round may fall back to idle only after two distinct unknown OCR frames,
+    /// and never while the next OCR frame is still being processed.
+    static func shouldDeferOCRBackedWorkingExit(
+        current: AgentStatus,
+        target: AgentStatus,
+        hasSeenOCRWorking: Bool,
+        consecutiveOCRUnknownFrames: Int,
+        ocrInProgress: Bool
+    ) -> Bool {
+        guard current == .working,
+              target == .idle,
+              hasSeenOCRWorking else { return false }
+        return ocrInProgress || consecutiveOCRUnknownFrames < 2
+    }
+
     // MARK: - OCR temporal handling
 
     /// OCR-frame handler: invoked exactly once per completed OCR run (from
@@ -484,6 +537,7 @@ final class AppWatcher {
         // 先处理最高优先级终止状态
         switch result.state {
         case .completed:
+            consecutiveOCRUnknownFrames = 0
             temporal.clearLease()
             cachedOCREvidence = makeEvidence(
                 result,
@@ -494,6 +548,7 @@ final class AppWatcher {
             return
 
         case .needsAttention:
+            consecutiveOCRUnknownFrames = 0
             temporal.clearLease()
             cachedOCREvidence = makeEvidence(
                 result,
@@ -503,8 +558,14 @@ final class AppWatcher {
             logProcessed(result: result, observedAt: observedAt, lease: "cleared(attention)")
             return
 
-        case .working, .unknown:
-            break
+        case .working:
+            hasSeenOCRWorking = true
+            consecutiveOCRUnknownFrames = 0
+
+        case .unknown:
+            if hasSeenOCRWorking {
+                consecutiveOCRUnknownFrames += 1
+            }
         }
 
         temporal.recordFrame(

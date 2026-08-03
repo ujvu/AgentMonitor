@@ -57,6 +57,17 @@ enum SignalDetector {
     /// Keyed by app id to isolate each app.
     static var workingTimerStallCount: [String: Int] = [:]
 
+    /// Guards the two static dictionaries above. `SignalDetector.detect` runs
+    /// concurrently from each AppWatcher's own queue (one per app), and an
+    /// unlocked static Dictionary is a data race — a poll that lands during
+    /// another app's dictionary resize crashes with EXC_BAD_ACCESS.
+    private static let stateLock = NSLock()
+    private static func withStateLock<T>(_ body: () -> T) -> T {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return body()
+    }
+
     /// Number of consecutive unchanged polls before a stalled working indicator
     /// is treated as a finished task. At a 2s poll interval, 3 ≈ 6 seconds.
     private static let stallThreshold = 3
@@ -123,9 +134,15 @@ enum SignalDetector {
         var completionSignal: AttentionSignal? = nil
         if let el = matchFirstPattern(definition.rule.completionSignals, in: window) {
             let snip = snippet(of: el)
-            let wasEmpty = (lastCompletionSnippets[definition.id]?.isEmpty ?? true)
-            if lastCompletionSnippets[definition.id]?.contains(snip) != true {
-                lastCompletionSnippets[definition.id, default: []].insert(snip)
+            let (wasEmpty, isNew) = withStateLock {
+                let wasEmpty = (lastCompletionSnippets[definition.id]?.isEmpty ?? true)
+                let isNew = lastCompletionSnippets[definition.id]?.contains(snip) != true
+                if isNew {
+                    lastCompletionSnippets[definition.id, default: []].insert(snip)
+                }
+                return (wasEmpty, isNew)
+            }
+            if isNew {
                 // Don't fire on the very first scan — those are historical
                 // completions already in the conversation, not new ones.
                 if !wasEmpty {
@@ -225,7 +242,7 @@ enum SignalDetector {
 
         // 4. else → idle. Reset the stall counter and timer memory so the next
         //    working session starts fresh.
-        workingTimerStallCount[definition.id] = 0
+        withStateLock { workingTimerStallCount[definition.id] = 0 }
         lastTimerText = nil
         state = .idle
     }
@@ -249,14 +266,17 @@ enum SignalDetector {
 
         if prev != text {
             // Text is changing — timer is ticking. Reset stall count.
-            workingTimerStallCount[appId] = 0
+            withStateLock { workingTimerStallCount[appId] = 0 }
             Logger.shared.logDebug("SignalDetector[\(appId)]: working text changed → fresh (\(text))")
             return true
         }
 
         // Same text as last poll — accumulate stall.
-        let stalls = (workingTimerStallCount[appId] ?? 0) + 1
-        workingTimerStallCount[appId] = stalls
+        let stalls = withStateLock {
+            let next = (workingTimerStallCount[appId] ?? 0) + 1
+            workingTimerStallCount[appId] = next
+            return next
+        }
         if stalls < stallThreshold {
             Logger.shared.logDebug("SignalDetector[\(appId)]: working text unchanged (stall \(stalls)/\(stallThreshold)) → still working")
             return true

@@ -93,6 +93,32 @@ struct DetectionTestMain {
               state(conversationalCompletionMention) == .unknown,
               "actual=\(String(describing: state(conversationalCompletionMention)))")
 
+        print("── ChatGPT Worker working→done 防误报回归 ──")
+        check("In-flight OCR holds OCR-backed working",
+              AppWatcher.shouldDeferOCRBackedWorkingExit(
+                current: .working, target: .idle,
+                hasSeenOCRWorking: true,
+                consecutiveOCRUnknownFrames: 2,
+                ocrInProgress: true))
+        check("One unknown OCR frame cannot end working",
+              AppWatcher.shouldDeferOCRBackedWorkingExit(
+                current: .working, target: .idle,
+                hasSeenOCRWorking: true,
+                consecutiveOCRUnknownFrames: 1,
+                ocrInProgress: false))
+        check("Two independent unknown OCR frames may end working",
+              !AppWatcher.shouldDeferOCRBackedWorkingExit(
+                current: .working, target: .idle,
+                hasSeenOCRWorking: true,
+                consecutiveOCRUnknownFrames: 2,
+                ocrInProgress: false))
+        check("Explicit completion is never delayed by idle gate",
+              !AppWatcher.shouldDeferOCRBackedWorkingExit(
+                current: .working, target: .completed,
+                hasSeenOCRWorking: true,
+                consecutiveOCRUnknownFrames: 0,
+                ocrInProgress: true))
+
         if let chatGPT = definitions["chatgpt"] {
             let completionEvent = StateEvent(
                 appId: "chatgpt",

@@ -24,6 +24,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // One-shot CLI hook (enables launch-at-login from outside, since
+        // SMAppService must be registered from inside the app process):
+        //   open /Applications/AgentMonitor.app --args --enable-login-item
+        if ProcessInfo.processInfo.arguments.contains("--enable-login-item") {
+            do {
+                try loginItemManager.enable()
+                Logger.shared.logInfo("开机启动已开启 (CLI hook)")
+            } catch {
+                Logger.shared.logError("开启开机启动失败: \(error.localizedDescription)")
+            }
+            NSApp.terminate(nil)
+            return
+        }
+
         // 1. Status bar
         setupStatusBar()
         // 2. Floating island — the single UI component

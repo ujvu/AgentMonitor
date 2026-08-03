@@ -148,9 +148,31 @@ final class Logger {
             guard let self = self else { return }
             self.rotateLogFileIfNeeded()
             guard let handle = self.fileHandle else { return }
-            handle.write(data)
-            try? handle.synchronize()
+            do {
+                // Use the throwing API: the legacy `write(_:)` raises an
+                // NSFileHandleOperationException when the underlying file was
+                // deleted/moved/rotated underneath us, and an uncaught NSException
+                // aborts the whole app. The throwing variant surfaces the same
+                // failure as a Swift error we can recover from.
+                try handle.write(contentsOf: data)
+                try? handle.synchronize()
+            } catch {
+                // Stale handle (file replaced externally). Reopen once; if that
+                // fails too, drop file logging — never crash the app over logs.
+                self.reopenAfterWriteFailure()
+                if let fresh = self.fileHandle {
+                    try? fresh.write(contentsOf: data)
+                }
+            }
         }
+    }
+
+    /// Best-effort recovery for a stale log file handle: close the broken
+    /// handle and reopen the log file from scratch. Runs on the logger queue.
+    private func reopenAfterWriteFailure() {
+        try? fileHandle?.close()
+        fileHandle = nil
+        openLogFile()
     }
 
     // MARK: - Convenience

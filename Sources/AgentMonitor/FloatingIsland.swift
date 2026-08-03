@@ -1090,17 +1090,41 @@ final class FloatingIsland: NSPanel {
 
     /// 引擎形变完成回调：收起时切到 hidden 渲染态 + 装 hover 命中区；
     /// 其余情况做最终几何确认 + 重算 tracking area。
+    ///
+    /// 命中区安装时机修复（hover 不响应根因）：hide() 的序列是
+    ///   contentFadeOut → collapsing → dormant
+    /// 三个阶段。每次阶段完成都调用本回调。.collapsing 完成时
+    /// `installHoverHitRegion()` 把 frame 设到 100×80；但接着 .dormant
+    /// 阶段的 `applyMorph()` 会把 frame 插值回 hiddenSize(100×4)，把
+    /// hover 命中区改小到几乎不可命中。修复：在 .dormant 完成时也调用
+    /// `installHoverHitRegion()`（重新把 frame 装回 100×80），保证整个
+    /// 隐藏周期里命中区稳定。
+    ///
+    /// **不调用 `orderOut()`**：原来 finishMorph(.collapsing) 在 hide 序列
+    /// 末尾调用 orderOut 把 panel 移出屏幕——但 orderOut 之后 NSWindow
+    /// 不再接受任何鼠标事件。即便 frame 是 100×80，orderOut'd 状态的
+    /// panel 鼠标滑上去也不会触发 mouseEntered，悬浮岛永远不展开。
+    /// 正确做法是让 panel 保持 on-screen：4px sliver 视觉上作为「岛存在」
+    /// 提示，76px 不可见区域作为 hover 命中区；alpha=0/容器 mode=hidden
+    /// 已经让内容完全不可见，不需要 orderOut。CPU 层面 animTimer 已
+    /// invalidate，draw() 在 hidden 模式 early return，开销可控。
     private func finishMorph(_ phase: IslandPhase) {
-        if phase == .collapsing {
+        switch phase {
+        case .collapsing:
             container.mode = .hidden
             installHoverHitRegion()
-            // hide() 发起的收起：几何收缩完成后才真正 orderOut。
+        case .dormant:
+            container.mode = .hidden
+            installHoverHitRegion()
+            // hide() 发起的收起序列：把模式翻到 hidden 并停掉动画计时器。
+            // 不 orderOut，让 panel 保留在屏幕空间以接收 hover 事件。
             if pendingHide {
                 pendingHide = false
                 currentMode = .hidden
                 animTimer?.invalidate()
-                orderOut(nil)
             }
+        default:
+            break
         }
         container.frame = contentView?.bounds ?? .zero
         container.updateTrackingAreas()
@@ -1130,15 +1154,36 @@ final class FloatingIsland: NSPanel {
     /// visible content area to remain at the top. The container draws nothing
     /// when `mode == .hidden`, so the extra height is transparent regardless.
     private func installHoverHitRegion() {
-        guard currentMode == .hidden else { return }
+        // Allow installation during both .hidden and .collapsing — the latter
+        // is the entire duration of `hide()`'s morph sequence, when currentMode
+        // is set to .collapsing by hide() itself. installHoverHitRegion is
+        // called from finishMorph(.collapsing/.dormant); we need it to run
+        // even before currentMode finally transitions to .hidden (which only
+        // happens after orderOut in the .dormant branch). Without accepting
+        // .collapsing here, the 100×80 hit region never gets installed during
+        // the hide morph and gets overridden by the .dormant phase's
+        // applyMorph — symptom: the panel stays at 100×4 (un-hoverable).
+        guard currentMode == .hidden || currentMode == .collapsing else { return }
         // Make the window's frame taller — visually still 4px because the
-        // container's draw is empty for .hidden, but the hit region is now
-        // ~80px tall (the extra 76px sits below the screen's top edge where
-        // the menu bar lives; the user can still see the island sliver at
-        // the top).
+        // container's draw is empty for .hidden. The hit region must NOT
+        // extend past the menu bar: the user's browser (and any other
+        // app) sits immediately below the menu bar, and an oversized hit
+        // region steals mouse events from that app. Size the hover region
+        // to the actual menu bar height (= screen.frame.maxY - visibleFrame.maxY)
+        // so the cursor only triggers the island while it is over the menu
+        // bar itself. On this display that's 30 pt; previous hard-coded 80
+        // px extended ~50 px below the menu bar, intercepting clicks meant
+        // for the browser.
         let screenFrame: NSRect = NSScreen.main?.frame ?? .zero
-        let hoverHeight: CGFloat = 80
-        // Anchor the visible 4px sliver to the screen top; extend downward.
+        let menuBarHeight: CGFloat = {
+            guard let screen = NSScreen.main else { return 30 }
+            return screen.frame.maxY - screen.visibleFrame.maxY
+        }()
+        let hoverHeight: CGFloat = menuBarHeight
+        // Anchor the visible 4px sliver to the screen top; extend downward
+        // by exactly menuBarHeight (so the bottom of the hit region is flush
+        // with the menu bar bottom — the cursor leaves the region as soon
+        // as it crosses into app content).
         let x = screenFrame.midX - hiddenSize.width / 2
         let y = screenFrame.maxY - hoverHeight
         let hoverFrame = NSRect(x: x, y: y, width: hiddenSize.width, height: hoverHeight)
