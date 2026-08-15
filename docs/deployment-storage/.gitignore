@@ -1,0 +1,28 @@
+# 截图与二进制资源不入库
+*.png
+*.jpg
+*.jpeg
+*.heic
+*.pdf
+*.zip
+*.tar.gz
+
+# 系统/编辑器噪音
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.vscode/
+.idea/
+
+# 日志与临时
+*.log
+*.tmp
+*.swp
+
+# OCR 截图子目录（如需同步目录结构可保留 .gitkeep）
+OCR/**
+!OCR/.gitkeep
