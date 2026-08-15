@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.cuishiming.dsh-status-writer</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>./dsh-status-writer.sh</string>
+        <string>watch</string>
+        <string>5</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>LimitLoadToSessionType</key>
+    <string>Aqua</string>
+    <key>StandardOutPath</key>
+    <string>/tmp/dsh-status-writer.launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/dsh-status-writer.launchd.err</string>
+    <key>WorkingDirectory</key>
+    <string>.</string>
+</dict>
+</plist>
