@@ -24,7 +24,7 @@ protocol AppWatcherDelegate: AnyObject {
 ///                                  committed StateSnapshot → delegate + events
 ///
 /// Dedup: the same signal type + snippet within `dedupInterval` is skipped.
-final class AppWatcher {
+final class AppWatcher: StatusEmitter {
 
     let definition: AppDefinition
     weak var delegate: AppWatcherDelegate?

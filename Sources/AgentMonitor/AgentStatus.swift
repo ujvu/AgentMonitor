@@ -41,20 +41,30 @@ enum AgentStatus: String, Equatable {
 enum EvidenceSource: Equatable {
     case ax
     case ocr
+    /// External local status file (e.g. a CLI / daemon writes a JSON the
+    /// agent owns). Used by agents that have no accessible window on macOS
+    /// (browser tabs, web services exposed on a local port) and instead
+    /// publish their state to a file we poll. Priority sits between AX and
+    /// OCR: the producer is in-process with the agent so its writes are
+    /// authoritative when fresh, but we still want AX (live UI) to win
+    /// when the agent has a real accessibility surface.
+    case fileStatus
 
     /// Data-source reliability weight. AX (live accessibility tree) is the most
     /// trusted live source; OCR (vision text recognition) is a best-effort hint.
     var priority: Int {
         switch self {
-        case .ax:  return 100
-        case .ocr: return 70
+        case .ax:          return 100
+        case .fileStatus:  return 85
+        case .ocr:         return 70
         }
     }
 
     var label: String {
         switch self {
-        case .ax:  return "ax"
-        case .ocr: return "ocr"
+        case .ax:          return "ax"
+        case .ocr:         return "ocr"
+        case .fileStatus:  return "file"
         }
     }
 }

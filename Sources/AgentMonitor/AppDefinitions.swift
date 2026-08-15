@@ -203,6 +203,41 @@ struct AppRule: Equatable {
     }
 }
 
+// MARK: - StatusSource
+
+/// How AgentMonitor derives a watched app's status.
+///
+/// `.axOCR` (default) — `AppWatcher` polls the AX tree + Vision OCR fallback.
+/// Used for native macOS apps and Electron surfaces with detectable windows.
+///
+/// `.fileProvider(path)` — an external producer (e.g. a CLI / daemon running
+/// in the agent's own process) writes a JSON status file at `path`; a
+/// `FileStatusWatcher` polls it at a fixed cadence and translates the JSON
+/// straight into `AgentStatus`. Used for agents that have no accessible
+/// macOS window (browser tabs, web services on a local port) and would
+/// otherwise need a browser-aware AX/OCR pipeline.
+enum StatusSource: Equatable {
+    case axOCR
+    case fileProvider(path: String)
+
+    /// Default poll cadence (seconds) for `.fileProvider` sources. AX/OCR has
+    /// no single default; each app's `OCRRule` carries its own.
+    static let fileProviderPollInterval: TimeInterval = 2.0
+    /// If a file's `updatedAt` is older than this, the watcher treats the
+    /// producer as dead and downgrades the reported status to `.idle`. Mirrors
+    /// the OCR `hintTTL` behavior so a stuck producer can't pin a "working"
+    /// status forever.
+    static let fileProviderStaleAfter: TimeInterval = 60.0
+
+    /// `true` for sources that need no Accessibility permission.
+    var usesAccessibility: Bool {
+        switch self {
+        case .axOCR:         return true
+        case .fileProvider:  return false
+        }
+    }
+}
+
 // MARK: - AppDefinition
 
 /// Defines a watched AI agent desktop app and its detection rules.
@@ -216,28 +251,33 @@ struct AppDefinition: Identifiable, Equatable {
     /// Process name used as a fallback identifier.
     let processName: String
     /// Detection rules (continue / approval / working / completion / stop / send / OCR).
+    /// Unused when `statusSource == .fileProvider`, but kept non-optional so
+    /// existing call sites keep compiling.
     let rule: AppRule
     /// Whether the app is currently enabled for monitoring. Disabled apps are
-    /// skipped entirely by the runtime — no `AppWatcher` is created, no AX poll
-    /// is scheduled, no OCR is run. Default is `true`. Mark an app disabled
-    /// (e.g. `enabled: false`) when the user has stopped using it, to avoid
-    /// wasting Accessibility / OCR resources on a process that never becomes
-    /// frontmost. The entry is preserved in `watchedApps` so it can be
-    /// re-enabled later just by flipping the flag back to `true`.
+    /// skipped entirely by the runtime — no watcher is created, no AX poll
+    /// is scheduled, no file is polled. Default is `true`. The entry is
+    /// preserved in `watchedApps` so it can be re-enabled later just by
+    /// flipping the flag back to `true`.
     let enabled: Bool
+    /// Where the agent's status comes from. Default `.axOCR` preserves prior
+    /// behavior for every app that hasn't opted in to a file-backed source.
+    let statusSource: StatusSource
 
     init(id: String,
          displayName: String,
          bundleId: String,
          processName: String,
          enabled: Bool = true,
-         rule: AppRule) {
+         rule: AppRule,
+         statusSource: StatusSource = .axOCR) {
         self.id = id
         self.displayName = displayName
         self.bundleId = bundleId
         self.processName = processName
         self.enabled = enabled
         self.rule = rule
+        self.statusSource = statusSource
     }
 
     // MARK: - Backward-Compat Computed Properties
@@ -280,6 +320,8 @@ struct AppDefinition: Identifiable, Equatable {
 ///   - WorkBuddy — enabled
 ///   - Z Code    — enabled
 ///   - ChatGPT   — enabled
+///   - DeepSeek Harness (DSH, Web GUI on http://127.0.0.1:3080) — enabled,
+///     file-provider source (~/Library/Application Support/AgentMonitor/dsh-status.json)
 let watchedApps: [AppDefinition] = [
 
     // 1. 千问办公 (QwenWork)
@@ -743,6 +785,29 @@ let watchedApps: [AppDefinition] = [
                 foregroundInterval: 1.0,
                 backgroundInterval: 5.0
             )
+        )
+    ),
+
+    // 5. DeepSeek Harness (DSH Web GUI on localhost:3080)
+    //
+    // The browser surface is invisible to Accessibility (we can't pin a single
+    // tab from outside the renderer), so we let DSH publish its own state to
+    // a JSON file written by `~/Library/AgentMonitor/scripts/dsh-status-writer.sh`
+    // (or any compatible producer). The schema lives alongside AgentMonitor in
+    // `docs/deployment-storage/dsh/`. `bundleId` / `processName` here are
+    // placeholders only — `findApp` is not consulted for `.fileProvider` apps.
+    AppDefinition(
+        id: "dsh",
+        displayName: "DeepSeek Harness",
+        bundleId: "ai.deepseek.harness",
+        processName: "dsh",
+        enabled: true,
+        // Empty ruleset — Detection by AX/OCR is intentionally off. The
+        // file-backed watcher ignores `rule.ocrRule`/`rule.workingSignals`
+        // and translates JSON.status directly to AgentStatus.
+        rule: AppRule(),
+        statusSource: .fileProvider(
+            path: "\(NSHomeDirectory())/Library/Application Support/AgentMonitor/dsh-status.json"
         )
     ),
 ]
