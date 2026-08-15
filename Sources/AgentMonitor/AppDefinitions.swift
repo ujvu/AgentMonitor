@@ -217,11 +217,16 @@ struct AppDefinition: Identifiable, Equatable {
          displayName: String,
          bundleId: String,
          processName: String,
+<<<<<<< HEAD
+=======
+         enabled: Bool = true,
+>>>>>>> d6ed8c9 (feat(ui): keep disabled apps out of floating island rotation & menu)
          rule: AppRule) {
         self.id = id
         self.displayName = displayName
         self.bundleId = bundleId
         self.processName = processName
+        self.enabled = enabled
         self.rule = rule
     }
 
