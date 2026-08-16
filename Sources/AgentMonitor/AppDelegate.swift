@@ -59,10 +59,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
 
         // 5. Start engine if AX granted, otherwise prompt
-        if axGranted {
-            monitorEngine.start()
-            Logger.shared.logInfo("AgentMonitor 已启动，正在监控智能体窗口")
-        } else {
+        // The engine itself now handles the per-source permission split: it
+        // starts file-provider sources regardless of AX, and only starts AX/OCR
+        // sources when permission is granted. So we always call start() and
+        // request permission in parallel for AX sources.
+        monitorEngine.start()
+        Logger.shared.logInfo(
+            "AgentMonitor: engine started (AX granted=\(axGranted), \(monitorEngine.appDefinitions.filter{$0.enabled && $0.statusSource.usesAccessibility}.count) AX watcher(s), \(monitorEngine.appDefinitions.filter{$0.enabled && !$0.statusSource.usesAccessibility}.count) file watcher(s))"
+        )
+        if !axGranted {
             Logger.shared.logWarning("辅助功能权限未开启，触发系统授权弹窗")
             PermissionManager.shared.requestAccessibility()
         }
@@ -638,8 +643,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             monitorEngine.start()
             Logger.shared.logInfo("检测到辅助功能权限已开启，启动监控")
         } else if !granted && monitorEngine.isRunning {
-            monitorEngine.stop()
-            Logger.shared.logWarning("辅助功能权限被撤销，停止监控")
+            // Only stop the AX-dependent sources; file-provider watchers
+            // don't need Accessibility and must keep running.
+            monitorEngine.stopAccessibilitySources()
+            Logger.shared.logWarning("辅助功能权限被撤销，停止 AX 监控（文件源不受影响）")
         }
         updateStatusIcon()
         rebuildMenu()
