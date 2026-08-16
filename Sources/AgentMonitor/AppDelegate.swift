@@ -216,21 +216,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let running = monitorEngine.isAppRunning(def)
             let state = monitorEngine.stateForApp(def)
 
+            // Disabled apps are kept in appDefinitions (so they round-trip the
+            // "enabled" switch) but the menu must mark them as paused instead of
+            // showing live state — otherwise the user sees a stale "工作中"
+            // /"未运行" line for an agent whose watcher is intentionally off.
             let symbol: String
-            if !running { symbol = "⚫" }
-            else if state == .needsAttention { symbol = "🔴" }
-            else if state == .working { symbol = "🟡" }
-            else if state == .completed { symbol = "🟢" }
-            else { symbol = "🔵" }
-
             let stateLabel: String
-            if !running { stateLabel = "未运行" }
-            else {
+            if !def.enabled {
+                symbol = "🚫"
+                stateLabel = "已停用"
+            } else if !running {
+                symbol = "⚫"
+                stateLabel = "未运行"
+            } else {
                 switch state.status {
-                case .idle:           stateLabel = "就绪"
-                case .working:        stateLabel = "工作中"
-                case .needsAttention: stateLabel = "等待接手"
-                case .completed:      stateLabel = "已完成"
+                case .idle:           symbol = "🔵"; stateLabel = "就绪"
+                case .working:        symbol = "🟡"; stateLabel = "工作中"
+                case .needsAttention: symbol = "🔴"; stateLabel = "等待接手"
+                case .completed:      symbol = "🟢"; stateLabel = "已完成"
                 }
             }
 
@@ -239,7 +242,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item.isEnabled = false
             agentSub.addItem(item)
 
-            if state == .needsAttention && running {
+            if def.enabled && state == .needsAttention && running {
                 let jumpItem = NSMenuItem(
                     title: "  ↳ 跳转到 \(def.displayName)",
                     action: #selector(jumpToApp(_:)),

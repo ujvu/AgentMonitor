@@ -43,12 +43,22 @@ final class MonitorEngine {
     init() {
         appDefinitions = watchedApps
         for def in appDefinitions {
+            watcherStates[def.id] = .idle
+            runningFlags[def.id] = false
+            // Disabled apps are kept in `appDefinitions` (so the UI can show
+            // them as paused) but do NOT spawn an AppWatcher — that saves an
+            // Accessibility poll loop and an OCR timer per disabled app.
+            guard def.enabled else {
+                Logger.shared.logInfo("MonitorEngine: skipping disabled app \(def.id) (\(def.displayName))")
+                continue
+            }
             let w = AppWatcher(definition: def)
             w.delegate = self
             watchers.append(w)
-            watcherStates[def.id] = .idle
-            runningFlags[def.id] = false
         }
+        let enabledCount = appDefinitions.filter { $0.enabled }.count
+        let disabledCount = appDefinitions.count - enabledCount
+        Logger.shared.logInfo("MonitorEngine: registered \(enabledCount) enabled watcher(s), \(disabledCount) disabled")
     }
 
     // MARK: - Start / Stop

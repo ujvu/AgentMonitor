@@ -471,7 +471,17 @@ final class FloatingIsland: NSPanel {
     private var completionOverrideUntil: Date?
 
     init(apps: [AppDefinition], engine: MonitorEngine) {
-        self.apps = apps
+        // Disabled apps are kept in `appDefinitions` (so callers can still see
+        // them as "paused") but the floating island must NEVER render a card
+        // for a disabled agent — its detection loop is off, so the scene would
+        // be permanently frozen on idle and would steal rotation slots from
+        // active agents.
+        let enabledApps = apps.filter { $0.enabled }
+        if enabledApps.count != apps.count {
+            let disabled = apps.filter { !$0.enabled }.map { $0.id }
+            Logger.shared.logInfo("FloatingIsland: hiding disabled apps from rotation/peek: \(disabled)")
+        }
+        self.apps = enabledApps
         self.engine = engine
         let container = FloatingIslandView()
         self.container = container

@@ -207,21 +207,36 @@ struct AppRule: Equatable {
 
 /// Defines a watched AI agent desktop app and its detection rules.
 struct AppDefinition: Identifiable, Equatable {
+    /// Stable identifier (e.g. "qwenwork", "workbuddy").
     let id: String
+    /// Human-readable name shown in UI (e.g. "千问办公").
     let displayName: String
+    /// macOS bundle identifier of the target app.
     let bundleId: String
+    /// Process name used as a fallback identifier.
     let processName: String
+    /// Detection rules (continue / approval / working / completion / stop / send / OCR).
     let rule: AppRule
+    /// Whether the app is currently enabled for monitoring. Disabled apps are
+    /// skipped entirely by the runtime — no `AppWatcher` is created, no AX poll
+    /// is scheduled, no OCR is run. Default is `true`. Mark an app disabled
+    /// (e.g. `enabled: false`) when the user has stopped using it, to avoid
+    /// wasting Accessibility / OCR resources on a process that never becomes
+    /// frontmost. The entry is preserved in `watchedApps` so it can be
+    /// re-enabled later just by flipping the flag back to `true`.
+    let enabled: Bool
 
     init(id: String,
          displayName: String,
          bundleId: String,
          processName: String,
+         enabled: Bool = true,
          rule: AppRule) {
         self.id = id
         self.displayName = displayName
         self.bundleId = bundleId
         self.processName = processName
+        self.enabled = enabled
         self.rule = rule
     }
 
@@ -253,8 +268,18 @@ struct AppDefinition: Identifiable, Equatable {
 
 // MARK: - Watched Apps
 
-/// All watched agent apps. Currently 4 apps are monitored:
-/// QwenWork, WorkBuddy, ZCode, and ChatGPT.
+/// All watched agent apps.
+///
+/// Each entry is a candidate for monitoring, whether or not it is *currently*
+/// enabled — see `AppDefinition.enabled`. Disabled entries are kept in this
+/// array (so they can be re-enabled by flipping the flag, and so the UI can
+/// show them as paused) but `MonitorEngine` will not spawn a watcher for them.
+///
+/// As of 2026-08-15:
+///   - 千问办公 (QwenWork) — disabled (user moved to DeepSeek Harness as primary)
+///   - WorkBuddy — enabled
+///   - Z Code    — enabled
+///   - ChatGPT   — enabled
 let watchedApps: [AppDefinition] = [
 
     // 1. 千问办公 (QwenWork)
@@ -263,6 +288,9 @@ let watchedApps: [AppDefinition] = [
         displayName: "千问办公",
         bundleId: "cn.qwenwork.desktop.mac",
         processName: "QwenWorkCN",
+        // 2026-08-15: 千问办公桌面端已不在前台运行，监控暂时关闭。
+        // 配置保留，重新启用只需将 enabled 改回 true。
+        enabled: false,
         rule: AppRule(
             // Continue: "继续"/"Continue" as button, exact match, buttonOnly
             continueSignals: [
