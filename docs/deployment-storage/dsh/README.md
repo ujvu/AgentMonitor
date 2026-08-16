@@ -1,13 +1,13 @@
 # DeepSeek Harness (DSH) 与 AgentMonitor 的对接约定
 
-> 本目录暂存 AgentMonitor 接入 DSH 所需的 **状态文件协议** 与 **DSH 端写入脚本**。
-> 本地约定，等 AgentMonitor 的 FileWatcher PR（#3，跟随合千问 disabled 的 #2 之后）合入后再端到端打通。
+> 状态文件协议 + DSH 端写入脚本。**已端到端打通**：AgentMonitor 的
+> `FileStatusWatcher`（主干 `agent/initial-release`，PR #3）每 2 秒轮询
+> 本协议文件；写入端 `dsh-status-writer.sh` v2 起推导**真实状态**。
 
 ## 目标
 
 把 DSH（一个跑在浏览器 `http://127.0.0.1:3080` 下的 Web GUI）接入 AgentMonitor 的"被监控智能体"列表，
-**不依赖 macOS Accessibility、不依赖屏幕截图**（按用户偏好排除截图方案）。仅靠 DSH 自己写一个
-JSON 状态文件，AgentMonitor 定期读取。
+**不依赖 macOS Accessibility、不依赖屏幕截图**（按用户偏好排除截图方案）。
 
 ## 文件路径
 
@@ -15,78 +15,88 @@ JSON 状态文件，AgentMonitor 定期读取。
 ~/Library/Application Support/AgentMonitor/dsh-status.json
 ```
 
-DSH 写入，AgentMonitor 读取。
+DSH 侧脚本写入，AgentMonitor `FileStatusWatcher` 读取。
 
 ## Status JSON 协议
-
-最小可用版本（按 AgentMonitor 现有 `WatcherState` 枚举对齐）：
 
 ```jsonc
 {
   "version": 1,
   "agent": "deepseek-harness",
-  // 必填字段。值域严格枚举，AgentMonitor 端会兜底 unknown：
-  //   "idle"        — 空闲，等待用户输入
+  // 值域（AgentMonitor 端会兜底 unknown → idle）：
+  //   "idle"        — 空闲
   //   "working"     — 正在处理任务（生成、读文件、跑命令等）
-  //   "needs_input" — 需要用户确认 / 补充信息 / 批准
-  //   "completed"   — 当前任务已完成（短时间内可能 idle）
+  //   "needs_input" — 需要用户确认 / 补充信息 / 批准（映射浮岛"等待接手"）
+  //   "completed"   — 当前任务已完成（短暂展示后回落 idle）
   //   "attention"   — 同 needs_input，兼容旧命名
   //   "error"       — 任务异常
   "status": "working",
   "task": {
-    "id": "round-42",         // 可选；会话级 ID，AgentMonitor 用做去重
-    "label": "修复 OCR bug",    // 可选；展示用标题
     "startedAt": 1755320000,   // 可选；unix 秒
-    "updatedAt": 1755320123    // 可选；unix 秒；AgentMonitor 用做 TTL
+    "updatedAt": 1755320123    // 可选；unix 秒；AgentMonitor 用做 60s TTL
   },
-  "details": "思考中：调用 Edit..."  // 可选；AgentMonitor 详情面板/日志
+  "details": "session transcript active (8s ago)"  // 可选；展示/日志
 }
 ```
 
-AgentMonitor 读到 `updatedAt` 距今超过 `60s` 时把状态降级为 `idle`（持 working 的租约过期），
-与 `OCRTemporalAggregator` 现有 lease 行为保持一致。
+AgentMonitor 读到 `updatedAt` 距今超过 60s 时把状态降级为 idle（lease 过期），
+与 `OCRTemporalAggregator` 行为一致。
 
-## DSH 端写入脚本
+## 写入端：dsh-status-writer.sh（v2，真实状态推导）
 
-`dsh-status-writer.sh`（本目录）是一个零依赖的 bash 脚本，提供三种用法：
+**不依赖 DSH 上游 hook**（DSH 是 npm 上的打包产物，无公开状态 API），从两个本地信号推导：
+
+| 信号 | 采集方式 | 说明 |
+|---|---|---|
+| 服务器在线 | `lsof -nP -iTCP:3080 -sTCP:LISTEN` | DSH web 是否在跑 |
+| 会话活跃 | `~/.dsh/sessions/**/session.jsonl.zstd` 最新 mtime | 实测：回合进行中转录约每 60s 批量落盘一次 |
+
+状态机：
+
+| 条件 | 写入状态 |
+|---|---|
+| 服务器不在线 | `idle`（details: server offline） |
+| 最新转录 age ≤ 150s | `working`（覆盖 60s 落盘节拍 + 一轮容错） |
+| 150s < age ≤ 330s | `completed`（回合刚结束） |
+| age > 330s | `idle` |
+
+用法：
 
 ```bash
-# 1) 直接写一个状态（CLI 任一时刻可调用）
-dsh-status-writer.sh working "处理用户请求"
-
-# 2) 一次会话内持续探测（轮询 DSH / 自己的回合判定逻辑，每 5s 写一次）
-dsh-status-writer.sh watch
-
-# 3) 配合 DSH 启动的 LaunchAgent，自动随 DSH 起停
-#    见 dsh.com.cuishiming.dsh-status-writer.plist（本目录）
+dsh-status-writer.sh watch 5      # LaunchAgent 常驻模式（推荐）
+dsh-status-writer.sh working "…"  # 手动覆盖（测试/纠偏）
 ```
 
-`dsh-status-writer.sh` 提供的写入：
-- 路径固定：`~/Library/Application Support/AgentMonitor/dsh-status.json`
-- 原子写：先写 `.tmp` 再 `mv`，避免半截写入
-- 单实例 lock：`flock` 防止多源竞写
+工程细节：
+- **原子写**：先写 `.tmp.$$` 再 `os.replace`，读方永远看不到半截 JSON
+- **互斥锁**：macOS 无 `flock`，用 `mkdir` 原子性做锁；被抢方安静退出，无残留锁目录
+- **日志节流**：watch 模式仅在状态**变化**时输出一行，避免 launchd 日志膨胀
 
-## 当前状态
+### 已知局限
 
-- AgentMonitor 端：**FileWatcher 暂未实现**。等 AgentMonitor PR #3（将跟随 PR #2）合入后，
-  本文件会被读取。请勿在没有 PR #3 合入前期待 DSH 状态在 AgentMonitor 浮岛显示。
-- DSH 端：脚本本身可以现在就运行，但 DSH 本身没有自动 hook；要么手工触发，
-  要么你自己用 `dsh-status-writer.sh` 串到 DSH 的 profile patch 上（需要 DSH 那一侧有
-  plugin/hook 机制 —— 在 DSH 当前版本里未公开暴露，由 DSH 维护者后续支持）。
+- **needs_input 无法从磁盘区分**：等待用户输入与回合结束都表现为"不再写入"。
+  v2 不产生 `needs_input`；需要 DSH 上游提供官方状态 hook 后替换信号源。
+- 落盘节拍（约 60s）是实测值，DSH 版本更新后需复核 `WORKING_MAX_AGE`。
 
-## 文件清单（本目录）
+## 安装（新机器）
 
-- `README.md` — 本文档
-- `dsh-status-writer.sh` — bash 写入脚本（CLI / watch 模式）
-- `dsh.com.cuishiming.dsh-status-writer.plist` — 选装 LaunchAgent（自动随 DSH 启停）
+```bash
+mkdir -p ~/Library/AgentMonitor/scripts
+cp dsh-status-writer.sh ~/Library/AgentMonitor/scripts/ && chmod +x ~/Library/AgentMonitor/scripts/dsh-status-writer.sh
+# plist 中的脚本路径改为绝对路径后：
+launchctl load -w ~/Library/LaunchAgents/com.cuishiming.dsh-status-writer.plist
+```
 
-## 关联 PR / Issue
+> 注意：LaunchAgent 的 `ProgramArguments` 必须指向**本地稳定路径**
+> （如 `~/Library/AgentMonitor/scripts/`），不要指向 OneDrive/iCloud 同步目录——
+> launchd 对同步盘上的脚本会报 `Operation not permitted`。
 
-- AgentMonitor PR #2：`feat(qwenwork-disabled)` — 千问 disabled（已开）
-- AgentMonitor PR #3：`feat(file-watcher-for-dsh)` — 后续 FileWatcher 实现
-- （待开）DSH 上游：请求一个"agent-state.json"hook 或等价 plugin
+## 端到端验证记录（2026-08-16）
 
-## 隐私
+```
+10:04:51 dsh-status: <init> -> working (session transcript active (2s ago))
+[02:04:53Z] MonitorEngine: [dsh] state idle → working   ← AgentMonitor 读到真实状态
+[02:04:53Z] FloatingIsland hidden -> expanded            ← 浮岛联动
+```
 
-DSH 状态文件是**本机本地**的，不会被自动上传。AgentMonitor 日志里的"details"字段默认
-只写到 `/tmp/agentmonitor.launchd.log`，与已有 OCR 处理路径一致；不上传 NAS 与 GitHub。
+（02:04:53Z UTC = 本机 10:04:53；此状态由 DSH agent 自身活动触发——自指监控闭环。）
