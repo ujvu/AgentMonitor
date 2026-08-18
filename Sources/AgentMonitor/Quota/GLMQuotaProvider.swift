@@ -110,6 +110,10 @@ final class GLMQuotaProvider: QuotaProvider {
                     ?? "GLM Coding Plan"
 
                 // 每个 limit 条目 → 一个额度窗口。
+                // 排序：月度(3) 在前、每周(6) 居中、5小时(5) 最后。
+                // 理由：菜单单行摘要 `menuSummary` 会按数组顺序拼成一行，
+                // 月度 Tokens 是用户最关心的"下次重置最久"那个——必须放第一
+                // 个，避免被后面的"5小时 搜索 95%"误读为"月度剩余"。
                 var windows: [QuotaWindow] = []
                 var remainingPercents: [Double] = []
                 for limit in limits {
@@ -154,6 +158,19 @@ final class GLMQuotaProvider: QuotaProvider {
                             ?? Self.double(limit["usage"])
                             ?? Self.double(limit["number"]),
                         resetAt: reset))
+                }
+
+                // 排序：月度(3) → 每周(6) → 5小时(5)。`menuSummary` 会按
+                // 数组顺序把窗口名拼成单行；把"月度 Tokens"放第一个位，让
+                // 它承担"主轴余量"的角色，避免被"5小时 搜索 95%"误导。
+                windows.sort { lhs, rhs in
+                    func rank(_ name: String) -> Int {
+                        if name.contains("月度") { return 0 }
+                        if name.contains("每周") { return 1 }
+                        if name.contains("5小时") { return 2 }
+                        return 3
+                    }
+                    return rank(lhs.name) < rank(rhs.name)
                 }
 
                 // 状态：取所有窗口「剩余」百分比的最小值判断（已用尽 → exhausted）。
