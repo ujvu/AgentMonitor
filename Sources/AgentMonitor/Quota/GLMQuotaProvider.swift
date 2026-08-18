@@ -24,12 +24,15 @@ import Foundation
 /// }
 /// ```
 ///
-/// ### 字段语义（实测确认，容易踩坑）
+/// ### 字段语义（实测 + 第三方实现核对，2026-08-18 修正）
 /// - **`percentage` 是「已使用百分比」，不是剩余百分比！** 例：percentage=22
 ///   表示已用 22%，剩余 78%。TIME_LIMIT 条目同时带 `remaining`（真实剩余值，
 ///   优先使用）；TOKENS_LIMIT 条目只有 `percentage`，剩余必须用 100-percentage。
-/// - **unit 语义**：5 = 5小时窗口（TIME_LIMIT，搜索/工具类额度），3 = 月度，
-///   6 = 每周。与用户看到的「5小时额度」对齐。
+/// - **unit 语义（易踩坑，曾误标）**：
+///   - `TOKENS_LIMIT unit=3 number=5` → **5小时 Token 限额**（5h 滚动窗口，重置最快）
+///   - `TOKENS_LIMIT unit=6 number=1` → **每周 Token 限额**
+///   - `TIME_LIMIT  unit=5`            → **MCP 月度配额**（搜索次数，每月重置）
+///   与智谱官方后台「用量统计」三张卡片一一对应：每5小时 / 每周 / MCP每月。
 /// - `nextResetTime` 为毫秒时间戳，是额度恢复时间。
 final class GLMQuotaProvider: QuotaProvider {
     let id: QuotaProviderID = .glm
@@ -110,10 +113,12 @@ final class GLMQuotaProvider: QuotaProvider {
                     ?? "GLM Coding Plan"
 
                 // 每个 limit 条目 → 一个额度窗口。
-                // 排序：月度(3) 在前、每周(6) 居中、5小时(5) 最后。
-                // 理由：菜单单行摘要 `menuSummary` 会按数组顺序拼成一行，
-                // 月度 Tokens 是用户最关心的"下次重置最久"那个——必须放第一
-                // 个，避免被后面的"5小时 搜索 95%"误读为"月度剩余"。
+                // 排序：5小时(3) 在前、每周(6) 居中、MCP月度(5) 最后——
+                // 与智谱官方后台"用量统计"卡片顺序一致（每5小时 / 每周 / MCP每月）。
+                // 窗口名语义（实测 + 第三方实现核对）：
+                //   TOKENS_LIMIT unit=3 number=5 → "5小时" Token 限额（5h 滚动，重置最快）
+                //   TOKENS_LIMIT unit=6 number=1 → "每周" Token 限额
+                //   TIME_LIMIT  unit=5             → "MCP 月度" 配额（搜索次数，每月重置）
                 var windows: [QuotaWindow] = []
                 var remainingPercents: [Double] = []
                 for limit in limits {
@@ -121,17 +126,22 @@ final class GLMQuotaProvider: QuotaProvider {
                     let unit = Self.int(limit["unit"]) ?? 0
                     let reset = Self.date(limit["nextResetTime"])
 
-                    // 窗口名：unit 5 = 5小时（TIME_LIMIT 为搜索/工具额度，
-                    // TOKENS_LIMIT 为 token 额度）；3 = 月度；6 = 每周。
+                    // 窗口名（与官方后台口径一致）：
+                    // - unit=3(number=5) TOKENS_LIMIT = 5小时 Token 限额
+                    // - unit=6(number=1) TOKENS_LIMIT = 每周 Token 限额
+                    // - unit=5 TIME_LIMIT = MCP 月度配额（搜索次数）
                     let unitName: String
                     switch unit {
-                    case 3:  unitName = "月度"
-                    case 5:  unitName = "5小时"
+                    case 3:  unitName = "5小时"
+                    case 5:  unitName = "MCP 月度"
                     case 6:  unitName = "每周"
                     default: unitName = "额度"
                     }
-                    let kindName = (type == "TOKENS_LIMIT") ? "Tokens" : (type == "TIME_LIMIT" ? "搜索" : "")
-                    let windowName = kindName.isEmpty ? "\(planName) \(unitName)" : "\(planName) \(unitName) \(kindName)"
+                    let kindName = (type == "TOKENS_LIMIT") ? "Tokens"
+                        : (type == "TIME_LIMIT" ? "配额" : "")
+                    let windowName = kindName.isEmpty
+                        ? "\(planName) \(unitName)"
+                        : "\(planName) \(unitName) \(kindName)"
 
                     // 剩余百分比：TIME_LIMIT 优先用官方 `remaining`（真实剩余值）；
                     // 否则用 100 - percentage（percentage 是「已用」百分比，实测确认）。
@@ -160,14 +170,14 @@ final class GLMQuotaProvider: QuotaProvider {
                         resetAt: reset))
                 }
 
-                // 排序：月度(3) → 每周(6) → 5小时(5)。`menuSummary` 会按
-                // 数组顺序把窗口名拼成单行；把"月度 Tokens"放第一个位，让
-                // 它承担"主轴余量"的角色，避免被"5小时 搜索 95%"误导。
+                // 排序：5小时(3) → 每周(6) → MCP月度(5)，与官方后台卡片顺序一致。
+                // `menuSummary` 按数组顺序拼成单行；"5小时"（重置最快、最易触顶）
+                // 放第一，让它在被"每周/MCP月度"稀释前一眼可见。
                 windows.sort { lhs, rhs in
                     func rank(_ name: String) -> Int {
-                        if name.contains("月度") { return 0 }
+                        if name.contains("5小时") { return 0 }
                         if name.contains("每周") { return 1 }
-                        if name.contains("5小时") { return 2 }
+                        if name.contains("MCP 月度") { return 2 }
                         return 3
                     }
                     return rank(lhs.name) < rank(rhs.name)
