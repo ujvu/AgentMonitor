@@ -16,6 +16,10 @@
     <string>AgentMonitor</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
+    <key>CFBundleIconFile</key>
+    <string>AgentMonitor</string>
+    <key>CFBundleIconName</key>
+    <string>AgentMonitor</string>
     <key>LSMinimumSystemVersion</key>
     <string>12.0</string>
     <key>LSUIElement</key>

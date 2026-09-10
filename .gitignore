@@ -25,3 +25,6 @@ DerivedData/
 .env
 .env.*
 !.env.example
+
+# App icon generator scratch output
+.icon-preview/
