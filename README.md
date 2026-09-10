@@ -1,6 +1,12 @@
 # AgentMonitor
 
-macOS **AI Dynamic Island 多 Agent 控制中心** —— 一个菜单栏常驻应用,用像素风悬浮岛实时呈现所有 AI Agent 桌面应用(ZCode / 千问办公 / WorkBuddy / ChatGPT)的工作状态。
+<img src="Resources/AgentMonitor.icns" width="96" align="right" alt="AgentMonitor icon" />
+
+macOS **AI Dynamic Island 多 Agent 控制中心** —— 一个菜单栏常驻应用,用像素风悬浮岛实时呈现所有 AI Agent 桌面应用(ZCode / 千问办公 / WorkBuddy / ChatGPT / DeepSeek Harness)的工作状态。
+
+> 应用图标：一只**注视的"眼睛"**嵌在三层状态环里（5小时 / 每周 / MCP月度），
+> 与菜单栏 SF Symbol(`eye.circle`)同源。`python3 Tools/generate-appicon.py`
+> 可重新生成（16/32/64px 自动切换为简化版以保小尺寸可辨识）。
 
 ```
                     ┌─────────────────────────────────────┐
