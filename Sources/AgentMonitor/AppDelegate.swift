@@ -173,27 +173,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             symbolName = "eye.slash.circle"
             redTinted = true
         } else if needsAttention {
-            symbolName = "eye.fill.circle"
+            // NOTE: the name is "eye.circle.fill", NOT "eye.fill.circle".
+            // The latter does not exist in SF Symbols, so
+            // `NSImage(systemSymbolName:)` returns nil — assigning nil to the
+            // status button's image blanked the menu-bar icon every time any
+            // agent entered needsAttention (the icon appeared to corrupt /
+            // vanish until the next state change).
+            symbolName = "eye.circle.fill"
         } else {
             symbolName = "eye.circle"
         }
 
         guard let button = statusItem.button else { return }
 
+        // Size the glyph explicitly for the menu bar. A bare
+        // `NSImage(systemSymbolName:)` comes back at its intrinsic size and
+        // can render inconsistently next to the system status items.
+        let sizeConfig = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
+
+        var image: NSImage?
         if redTinted {
-            let config = NSImage.SymbolConfiguration(hierarchicalColor: .systemRed)
-            button.image = NSImage(
-                systemSymbolName: symbolName,
-                accessibilityDescription: "AgentMonitor — 权限未开启"
-            )?.withSymbolConfiguration(config)
-            button.image?.isTemplate = false
+            let colorConfig = NSImage.SymbolConfiguration(hierarchicalColor: .systemRed)
+            image = NSImage(systemSymbolName: symbolName,
+                            accessibilityDescription: "AgentMonitor — 权限未开启")?
+                .withSymbolConfiguration(sizeConfig.applying(colorConfig))
+            image?.isTemplate = false
         } else {
-            button.image = NSImage(
-                systemSymbolName: symbolName,
-                accessibilityDescription: "AgentMonitor — 监控中"
-            )
-            button.image?.isTemplate = true
+            image = NSImage(systemSymbolName: symbolName,
+                            accessibilityDescription: "AgentMonitor — 监控中")?
+                .withSymbolConfiguration(sizeConfig)
+            image?.isTemplate = true
         }
+
+        // Defensive fallback: never hand the status button a nil image, or the
+        // menu-bar slot goes blank/wrong. If the chosen symbol is unavailable
+        // (renamed, or running on an OS that lacks it), fall back to the plain
+        // eye rather than clearing the icon.
+        if image == nil {
+            Logger.shared.logWarning("updateStatusIcon: symbol '\(symbolName)' unavailable — falling back to eye.circle")
+            image = NSImage(systemSymbolName: "eye.circle",
+                            accessibilityDescription: "AgentMonitor")?
+                .withSymbolConfiguration(sizeConfig)
+            image?.isTemplate = true
+        }
+        button.image = image
     }
 
     // MARK: - Menu
