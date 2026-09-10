@@ -194,9 +194,15 @@ def write_png_set(rgb):
 
 
 def write_icns(png_paths, out_path):
+    # icns chunk types are FOUR-byte codes, not a single byte. Using
+    # b"\x10" etc. produces a container macOS cannot index (Finder falls back
+    # to a generic icon and Spotlight reports no icon name), so use the real
+    # codes:
+    #   icp4 16px · icp5 32px · icp6 64px
+    #   ic07 128px · ic08 256px · ic09 512px · ic10 1024px
     type_codes = {
-        16: b"\x10", 32: b"\x20", 64: b"\x30", 128: b"\x40",
-        256: b"\x50", 512: b"\x60", 1024: b"\x70",
+        16:   b"icp4", 32:  b"icp5", 64:   b"icp6",
+        128:  b"ic07", 256: b"ic08", 512:  b"ic09", 1024: b"ic10",
     }
     payload = b""
     for s, p in png_paths.items():
@@ -205,6 +211,23 @@ def write_icns(png_paths, out_path):
         with open(p, "rb") as f:
             data = f.read()
         payload += type_codes[s] + len(data).to_bytes(4, "big") + data
+
+    # Retina (@2x) slots. macOS looks these up first on HiDPI displays, so
+    # including them keeps the dock/Spotlight render crisp instead of letting
+    # the system upscale an @1x bitmap.
+    retina = {
+        32:   b"ic11",   # 16pt @2x
+        64:   b"ic12",   # 32pt @2x
+        256:  b"ic13",   # 128pt @2x
+        512:  b"ic14",   # 256pt @2x
+    }
+    for src_size, code in retina.items():
+        p = png_paths.get(src_size)
+        if p is None:
+            continue
+        with open(p, "rb") as f:
+            data = f.read()
+        payload += code + len(data).to_bytes(4, "big") + data
     total = 8 + len(payload)
     with open(out_path, "wb") as f:
         f.write(b"icns" + total.to_bytes(4, "big") + payload)
