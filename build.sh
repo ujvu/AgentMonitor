@@ -58,6 +58,14 @@ chmod +x "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
 # Copy Info.plist (overwrite in place).
 cp "${RES_DIR}/Info.plist" "${APP_BUNDLE}/Contents/Info.plist"
 
+# Copy app icon (.icns) into the bundle so macOS picks it up from
+# Contents/Resources/ (older format) and the modern Contents/Resources/
+# is the canonical location for both CFBundleIconFile (icns) and
+# CFBundleIconName references.
+if [ -f "${RES_DIR}/AgentMonitor.icns" ]; then
+    cp "${RES_DIR}/AgentMonitor.icns" "${APP_BUNDLE}/Contents/Resources/AgentMonitor.icns"
+fi
+
 # Create PkgInfo if missing.
 if [ ! -f "${APP_BUNDLE}/Contents/PkgInfo" ]; then
     echo "APPL????" > "${APP_BUNDLE}/Contents/PkgInfo"
