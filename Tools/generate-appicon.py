@@ -17,8 +17,10 @@ at dock 16px and menu-bar 18px.
 from PIL import Image, ImageDraw, ImageFilter
 import math
 import os
+import subprocess
 import sys
 import tempfile
+import shutil
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_DIR = os.path.dirname(SCRIPT_DIR)
@@ -233,6 +235,34 @@ def write_icns(png_paths, out_path):
         f.write(b"icns" + total.to_bytes(4, "big") + payload)
 
 
+def _write_iconset(paths):
+    """Lay the PNGs out as an Apple .iconset bundle.
+
+    `iconutil` is Apple's own icns tool, so letting it build the container
+    avoids hand-rolling the chunk format (an earlier hand-rolled writer
+    emitted single-byte chunk codes and produced a container macOS could not
+    index correctly).
+    """
+    iconset = os.path.join(PNG_DIR, "AppIcon.iconset")
+    os.makedirs(iconset, exist_ok=True)
+    # Apple's required naming: icon_<pt>x<pt>[@2x].png
+    layout = {
+        "icon_16x16.png":        paths[16],
+        "icon_16x16@2x.png":     paths[32],
+        "icon_32x32.png":        paths[32],
+        "icon_32x32@2x.png":     paths[64],
+        "icon_128x128.png":      paths[128],
+        "icon_128x128@2x.png":   paths[256],
+        "icon_256x256.png":      paths[256],
+        "icon_256x256@2x.png":   paths[512],
+        "icon_512x512.png":      paths[512],
+        "icon_512x512@2x.png":   paths[1024],
+    }
+    for name, src_path in layout.items():
+        shutil.copyfile(src_path, os.path.join(iconset, name))
+    return iconset
+
+
 def main():
     full = render(simplified=False)
     simple = render(simplified=True)
@@ -260,8 +290,17 @@ def main():
         print(f"  {s:>4}px [{kind}]: {paths[s]}")
 
     icns_path = os.path.join(OUT_DIR, "AgentMonitor.icns")
-    write_icns(paths, icns_path)
-    print(f"\nWrote ICNS: {icns_path}")
+    iconset = _write_iconset(paths)
+
+    iconutil = shutil.which("iconutil")
+    if iconutil:
+        subprocess.run([iconutil, "-c", "icns", iconset, "-o", icns_path], check=True)
+        print(f"\nWrote ICNS via iconutil: {icns_path}")
+    else:
+        # Fallback for environments without iconutil (unlikely on macOS).
+        write_icns(paths, icns_path)
+        print(f"\nWrote ICNS via built-in writer (iconutil missing): {icns_path}")
+
     full.save(os.path.join(PNG_DIR, "AppIcon-1024.png"), "PNG")
     simple.save(os.path.join(PNG_DIR, "AppIcon-simple-1024.png"), "PNG")
     print(f"Wrote 1024 sources (full + simple) to {PNG_DIR}")
